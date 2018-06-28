@@ -247,5 +247,19 @@ LSTM,18,tanh,0.001,mean_absolute_error at,144,18,8.257,1.509,177.2
 LSTM,18,tanh,0.001,mean_absolute_error at,144,18,7.352,1.071,177.7
 LSTM,18,tanh,0.001,mean_absolute_error at,144,72,6.115,1.269,48.9
 LSTM,18,relu,0.001,logcosh at,144,9,19.189,7.483,354.9
+LSTM,288,tanh,0.0001,mean_absolute_error at,144,36,6.761,1.113,324.3
+LSTM,288,tanh,0.0001,mean_absolute_error at,144,36,8.266,0.939,323.7
+LSTM,288,tanh,0.0001,mean_absolute_error at,144,36,7.370,0.996,320.9
+LSTM,144,tanh,0.0001,mean_absolute_error at,144,36,10.006,0.747,100.5
+LSTM,144,tanh,1e-05,mean_absolute_error at,144,72,7.007,0.856,73.9
+LSTM,576,tanh,1e-05,mean_absolute_error at,144,18,8.449,0.801,1935.9
+LSTM,288,tanh,1e-05,mean_absolute_error at,144,72,6.999,0.801,210.8
+LSTM,288,tanh,0.0001,mean_absolute_error at,144,72,7.730,0.780,209.2
+LSTM,576,tanh,0.0001,mean_absolute_error at,144,18,6.240,0.840,1995.7
+LSTM,144,tanh,0.0001,mean_absolute_error at,144,72,6.971,0.736,68.1
+LSTM,576,tanh,1e-05,mean_absolute_error at,144,72,7.335,0.719,734.3
+LSTM,576,tanh,1e-06,mean_absolute_error at,144,18,42.664,2.995,1868.8
+LSTM,288,tanh,1e-06,mean_absolute_error at,144,18,93.852,7.064,422.3
+LSTM,144,tanh,1e-06,mean_absolute_error at,144,36,134.983,13.307,104.1
 
 
