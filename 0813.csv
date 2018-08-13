@@ -1,0 +1,25 @@
+# DEBUG use
+    #space = {   
+    #        'neurons': hp.choice('neurons', [72]),
+    #        'epochs': hp.choice('epochs', [50]),
+    #        'batch_size': hp.choice('batch_size', [36]),
+    #        'optimizer': hp.choice('optimizer', ['Adam']),
+    #        'optimizer_lr': hp.choice('lr', [0.001]),
+    #        'loss': hp.choice('loss', [losses.mae]),
+    #        'activation': hp.choice('activation',['tanh']),
+    #        'dropout': hp.choice('dropout', [0] ),
+    #        'filter_price': hp.choice('filter_price', [100] ),
+    #        'hidden_layer_number': hp.choice('hidden_layer_number', [1] )
+    #    }
+    space = {   
+            'neurons': hp.choice('neurons', [72]),
+            'epochs': hp.choice('epochs', [250]),
+            'batch_size': hp.choice('batch_size', [36]),
+            'optimizer': hp.choice('optimizer', ['Adagrad']),
+            'optimizer_lr': hp.choice('lr', [0.001]),
+            'loss': hp.choice('loss', [losses.mae]),
+            'activation': hp.choice('activation',['relu']),
+            'dropout': hp.choice('dropout', [0] ),
+            'filter_price': hp.choice('filter_price', [100] ),
+            'hidden_layer_number': hp.choice('hidden_layer_number', [1] )
+        }
