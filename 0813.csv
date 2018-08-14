@@ -1,4 +1,558 @@
-# DEBUG use
+import os
+import sys
+import time
+import json
+import re
+import numpy
+import scipy
+import pickle
+from math import sqrt
+from matplotlib import pyplot
+from pandas import read_csv
+from pandas import DataFrame
+from pandas import concat
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics import mean_squared_error
+from keras.models import Sequential
+from keras.models import Model
+from keras.layers.core import Dense, Dropout, Activation, Flatten, Permute, Reshape
+from keras.layers import merge, Input, concatenate
+from keras.layers.recurrent import LSTM, GRU, SimpleRNN
+from keras.layers import Convolution1D, MaxPooling1D, GlobalAveragePooling1D, GlobalMaxPooling1D, RepeatVector, AveragePooling1D
+from keras.callbacks import ModelCheckpoint, ReduceLROnPlateau, CSVLogger
+from keras.layers.wrappers import Bidirectional, TimeDistributed
+from keras import regularizers
+from keras.layers.normalization import BatchNormalization
+from keras.layers.advanced_activations import *
+from keras.optimizers import RMSprop, Adam, SGD, Nadam, Adagrad
+from keras.initializers import *
+from keras.constraints import *
+from keras import regularizers
+from keras import losses
+from keras import backend as K
+from hyperopt import fmin, tpe, hp, STATUS_OK, Trials
+
+#import seaborn as sns
+#sns.despine()
+
+def read_csv_to_dict( input_table ):
+    list_return = []
+
+    list_header = []
+
+    with open(input_table, 'r') as f:
+        run_flag = 0
+
+        for line in f:
+            run_flag = run_flag + 1
+
+            line = line.strip()
+
+            if run_flag == 1:
+                list_header = line.split(',')
+
+            else:
+                list_row_data = line.split(',')
+                if len(list_row_data) == 0:
+                    continue
+                    
+                dict_row_data = {}
+                for i in range(len(list_header)):
+                    dict_row_data[ list_header[i] ] = list_row_data[i]
+
+                list_return.append( dict_row_data )
+
+    return list_return
+
+def write_dict_to_csv( list_datas, list_header, output_file_path ):
+    
+    # https://stackoverflow.com/questions/12517451/automatically-creating-directories-with-file-output
+    os.makedirs(os.path.dirname(output_file_path), exist_ok=True)
+    
+    if os.path.isfile(output_file_path):
+        file_open_option = 'a'
+    else:
+        file_open_option = 'w'
+    
+    with open(output_file_path, file_open_option) as f:
+        if file_open_option == 'w':
+            f.write( ','.join(list_header)  + '\n')
+
+        for this_data in list_datas:
+            run_flag = 0
+            output_string = ''
+
+            for this_key in list_header:
+                run_flag = run_flag + 1
+                if run_flag == 1:
+                    output_string = str(this_data[this_key])
+                else:
+                    output_string = output_string + ',' + str(this_data[this_key])
+
+            f.write(output_string + '\n')
+
+def get_min_rmse_from_hisotry():
+    file_path = './outputs_manual_train/stats/lstm_experiment_future_sell_price.csv'
+    list_datas = read_csv_to_dict(file_path)
+    if len(list_datas) == 0:
+        return 9999
+    list_datas = sorted(list_datas, key = lambda item : item['RMSE'])
+    return list_datas[0]['RMSE']
+            
+def get_list_test_stock():
+    list_return = []
+    list_return.append('1101')    # row_count: 11  price_item_count: 41  first_price: 42.95
+    list_return.append('1218')    # row_count: 11  price_item_count: 28  first_price: 19.05
+    list_return.append('1303')    # row_count: 11  price_item_count: 18  first_price: 85.8
+    list_return.append('2462')    # row_count: 11  price_item_count: 50  first_price: 28.2
+    list_return.append('2520')    # row_count: 11  price_item_count: 23  first_price: 20.85
+    list_return.append('2340')    # row_count: 11  price_item_count: 24  first_price: 22.95
+    list_return.append('8404')    # row_count: 11  price_item_count: 48  first_price: 44.6
+    list_return.append('2382')    # row_count: 11  price_item_count: 19  first_price: 53.6
+    list_return.append('4139')    # row_count: 11  price_item_count: 18  first_price: 65.5
+    list_return.append('3679')    # row_count: 11  price_item_count: 18  first_price: 76.5
+    list_return.append('4430')    # row_count: 11  price_item_count: 19  first_price: 32.55
+    list_return.append('2354')    # row_count: 11  price_item_count: 23  first_price: 75.2
+    
+    return list_return
+
+def get_sorted_list_accordingly(list_y1, list_y2):
+    
+    list_y1 = list(list_y1)
+    list_y2 = list(list_y2)
+    
+    list_data = []
+    for i in range(len(list_y1)):
+        dict_temp = {}
+        dict_temp['y1'] = list_y1[i]
+        dict_temp['y2'] = list_y2[i]
+        
+        list_data.append(dict_temp)
+        
+    list_data = sorted(list_data, key = lambda item : item['y1'])
+    
+    list_y1_return = []
+    list_y2_return = []
+    for item in list_data:
+        list_y1_return.append(item['y1'])
+        list_y2_return.append(item['y2'])
+    
+    return list_y1_return, list_y2_return
+
+def get_this_optimizer( this_optimizer, this_learning_rate ):
+    if this_optimizer == 'Adam':
+        return Adam(lr=this_learning_rate)
+    
+    if this_optimizer == 'RMSprop':
+        return RMSprop(lr=this_learning_rate)
+    
+    if this_optimizer == 'Adagrad':
+        return Adagrad(lr=this_learning_rate)
+
+def prepare_sequential_test_data_of_stocks(this_symbol):
+    # load dataset
+    input_file_path = './outputs_manual_train/stats/profile_qty_price_multiple_day/profile_qty_price_multiple_day_for_machine_learning.csv'
+    dataset = read_csv(input_file_path, header=0, index_col=0, \
+                       dtype={'symbol': str, \
+                              'date_group': str, \
+                              'price_1': float, \
+                              'qty_ratio_1': float, \
+                              'price_2': float, \
+                              'qty_ratio_2': float, \
+                              'price_3': float, \
+                              'qty_ratio_3': float, \
+                              'qty_total': float, \
+                              'price_item_count': float, \
+                              'plus_1_day_low_price': float, \
+                              'plus_1_day_high_price': float, \
+                              'plus_2_day_low_price': float, \
+                              'plus_2_day_high_price': float
+                             })
+    
+    #list_test_stock = get_list_test_stock()
+    #return dataset[dataset['symbol'].isin(list_test_stock)]
+    
+    return dataset[dataset['symbol'] == this_symbol]
+
+def prepare_data(filter_price):
+    # load dataset
+    input_file_path = './outputs_manual_train/stats/profile_qty_price_multiple_day/profile_qty_price_multiple_day_for_machine_learning.csv'
+    dataset = read_csv(input_file_path, header=0, index_col=0, \
+                       dtype={'symbol': str, \
+                              'date_group': str, \
+                              'price_1': float, \
+                              'qty_ratio_1': float, \
+                              'price_2': float, \
+                              'qty_ratio_2': float, \
+                              'price_3': float, \
+                              'qty_ratio_3': float, \
+                              'qty_total': float, \
+                              'price_item_count': float, \
+                              'plus_1_day_low_price': float, \
+                              'plus_1_day_high_price': float, \
+                              'plus_2_day_low_price': float, \
+                              'plus_2_day_high_price': float
+                             })
+
+    # drop test some data for test
+    #display(dataset)
+    list_test_stock = get_list_test_stock()
+    for x in list_test_stock:
+        dataset = dataset[dataset['symbol'] != x]
+    #display(dataset)
+    
+    # remove high_price > 300
+    dataset = dataset[dataset['plus_2_day_low_price'] <= filter_price]
+    
+    #https://stackoverflow.com/questions/13411544/delete-column-from-pandas-dataframe-using-del-df-column-name
+    dataset = dataset.drop('symbol', 1)
+    dataset = dataset.drop('date_group', 1)
+    dataset = dataset.drop('plus_1_day_low_price', 1)
+    dataset = dataset.drop('plus_1_day_high_price', 1)
+    dataset = dataset.drop('plus_2_day_high_price', 1)
+    #display(dataset)
+
+    # shuffle input data
+    #https://stackoverflow.com/questions/29576430/shuffle-dataframe-rows
+    dataset = dataset.sample(frac=1)
+    #display(dataset)
+
+    #values = dataset.values
+    #print(values)
+    #print('\n\n')
+
+    # auto-label your data to 0,1,2... example 'a', 'a', 'b', 'c'  --> 0 0 1 2
+    #encoder = LabelEncoder()
+    #values[:,0] = encoder.fit_transform(values[:,0])
+    #print(values)
+    #print('\n\n')
+
+    # Dimensions of dataset
+    n = dataset.shape[0]
+    p = dataset.shape[1]
+    
+    # Training and test data
+    values = dataset.values
+    train_start = 0
+    train_end = round(dataset.shape[0] * 0.8 )
+    test_start = train_end
+    test_end = n
+    train = values[np.arange(train_start, train_end), :]
+    test = values[np.arange(test_start, test_end), :]
+    #print('\n------ train data -------')
+    #print(train)
+    #print('\n------ test data -------')
+    #print(test)
+    
+    # normalize features
+    #scaler = StandardScaler()
+    scaler = MinMaxScaler()
+    scaler.fit(train)
+    train = scaler.transform(train)
+    test = scaler.transform(test)
+    
+    # split into input and outputs
+    n_cols_outputs = 1
+    n_cols_inputs = dataset.shape[1] - n_cols_outputs
+
+    train_X, train_y = train[:, :n_cols_inputs], train[:, -n_cols_outputs]
+    #print('\n------ train_y, train_y data -------')
+    #print(train_X.shape, len(train_X), train_y.shape)
+    #print('\n------ train_X data -------')
+    #print(train_X)
+    #print('\n------ train_y data -------')
+    #print(train_y)
+
+    test_X, test_y = test[:, :n_cols_inputs], test[:, -n_cols_outputs]
+
+    # reshape input to be 3D [samples, timesteps, features]
+    train_X = train_X.reshape((train_X.shape[0], 1, train_X.shape[1]))
+    test_X = test_X.reshape((test_X.shape[0], 1, test_X.shape[1]))
+    #print('\n------ reshape input to be 3D [samples, timesteps, features] -------')
+    #print(train_X.shape, train_y.shape, test_X.shape, test_y.shape)
+    
+    return scaler, train_X, train_y, test_X, test_y
+
+def lstm_experiment(params):
+    global experiment_run_flag
+    experiment_run_flag = experiment_run_flag + 1
+    print('\n\n')
+    print('.....................................................................................................................')
+    print('.                Test Run: ' + str(experiment_run_flag) + '                  .')
+    print('.....................................................................................................................')
+    
+    print('\n ---- Test Params ----')
+    print(params)
+    
+    this_result = {}
+    this_result['model'] = 'LSTM'
+    this_result['hidden_layer']  = params['hidden_layer_number'] 
+    this_result['neurons'] = params['neurons']
+    this_result['activation'] = params['activation']
+    this_result['optimizer'] = params['optimizer']
+    this_result['optimizer_lr'] = params['optimizer_lr']
+    
+    #print(str(params['loss']))
+    searchObj = re.search( r'<function (.*) .*', str(params['loss']))
+    this_result['loss'] = searchObj.group(1)
+    
+    this_result['epochs'] = params['epochs']
+    this_result['batch_size'] = params['batch_size']
+    start_time = time.time()
+    
+    # get data
+    filter_price = params['filter_price']
+    scaler, train_X, train_y, test_X, test_y = prepare_data(filter_price)
+    print('Train data count: ' + str(train_X.shape[0]))
+    this_result['train_size'] = str(train_X.shape[0])
+    this_result['validation_size'] = str(test_X.shape[0])
+    
+    try:
+        # design network
+        model = Sequential()
+
+        # return_sequences=True for stacked LSTM
+        hidden_layer_number = params['hidden_layer_number']       
+
+        if hidden_layer_number == 1:
+            model.add(LSTM(
+                           params['neurons'], 
+                           activation=params['activation'], 
+                           input_shape=(train_X.shape[1], train_X.shape[2]),
+                           dropout=params['dropout']
+                          ))        
+        else:
+            model.add(LSTM(
+                           params['neurons'], 
+                           activation=params['activation'], 
+                           input_shape=(train_X.shape[1], train_X.shape[2]),
+                           dropout=params['dropout'],
+                           return_sequences=True
+                          ))
+
+            # second~ hidden layer
+            for i in range(hidden_layer_number - 2):     
+                model.add(LSTM(
+                       params['neurons'], 
+                       activation=params['activation'], 
+                       dropout=params['dropout'],
+                       return_sequences=True
+                      ))        
+
+            # last hidden-layer
+            model.add(LSTM(params['neurons']))
+
+        model.add(Dense(1))
+
+        this_optimizer = get_this_optimizer(params['optimizer'], params['optimizer_lr'])
+        this_loss = params['loss']
+
+        # metrics=['accuracy'] is used for classification problem , metrics=['mean_squared_error'] should be for regression problem
+        model.compile(loss=this_loss, optimizer=this_optimizer)
+        # fit network
+        # verbose: print runtime information
+        history = model.fit(train_X, train_y, epochs=params['epochs'], batch_size=params['batch_size'], validation_data=(test_X, test_y), verbose=1, shuffle=True)
+    except:
+        print(' ----- Error!! Something happened -----')
+        print(params)
+        return {'loss': 999999, 'status': STATUS_OK}
+    
+    # "Loss"
+    pyplot.figure(figsize=(15, 20))
+    pyplot.subplots_adjust(hspace=0.6, wspace=0.4)
+    aplot = pyplot.subplot(5,2,1)
+    aplot.set_ylim([0.01, 0.02])
+    pyplot.plot(history.history['loss'], label='train')
+    pyplot.plot(history.history['val_loss'], label='test')
+    pyplot.title('model loss')
+    pyplot.ylabel('loss')
+    pyplot.xlabel('epoch')
+    pyplot.legend(['train', 'validation'], loc='upper left')
+    
+    # make a prediction
+    y_predict = model.predict(test_X)
+    #print(test_X.shape)
+    test_X = test_X.reshape((test_X.shape[0], test_X.shape[2]))
+    # invert scaling for forecast
+    #print(test_X.shape)
+    inv_y_predict = numpy.concatenate((test_X[:, :], y_predict), axis=1)
+    #print(inv_y_predict.shape)
+    inv_y_predict = scaler.inverse_transform(inv_y_predict)
+    inv_y_predict = inv_y_predict[:, -1]
+    # invert scaling for actual
+    test_y = test_y.reshape((len(test_y), 1))
+    inv_y = numpy.concatenate((test_X[:, :], test_y), axis=1)
+    inv_y = scaler.inverse_transform(inv_y)
+    inv_y = inv_y[:, -1]
+    # calculate RMSE
+    rmse = sqrt(mean_squared_error(inv_y, inv_y_predict))
+    print('\nTest RMSE: %.3f' % rmse)
+    this_result['RMSE'] = '%.3f' % rmse
+
+    # plot offset vs price to see if 
+    list_inv_y, list_inv_y_predict = get_sorted_list_accordingly(inv_y, inv_y_predict)
+    list_offset_absolute = []
+    for i in range(len(list_inv_y)):
+        list_offset_absolute.append( abs(list_inv_y_predict[i] - list_inv_y[i]) / list_inv_y[i] )
+        
+    list_offset_absolute_new = []
+    list_inv_y_new = []
+    count_larger_than_0p1 = 0
+    count_smaller_than_0p1 = 0
+    for x in range(len(list_offset_absolute)):
+        if list_offset_absolute[x] < 0.1:
+            list_offset_absolute_new.append(list_offset_absolute[x])
+            list_inv_y_new.append(list_inv_y[x])
+            count_smaller_than_0p1 = count_smaller_than_0p1 + 1
+        else:
+            count_larger_than_0p1 = count_larger_than_0p1 + 1
+       
+    print('\ncount_smaller_than_0p1: ' + str(count_smaller_than_0p1))
+    print('count_larger_than_0p1: ' + str(count_larger_than_0p1))
+    
+    num_bins = len(set(list_offset_absolute_new))
+    counts, bin_edges = np.histogram (list_offset_absolute_new, bins=num_bins, normed=True)
+    cdf = np.cumsum (counts)
+    list_probability_y = cdf/cdf[-1]
+    list_offset_bins_x = bin_edges[1:] 
+    
+    # get offset for 50% probility
+    offest_at_50_percent_probility = -999
+    for i in range(len(list_probability_y)):
+        if round(list_probability_y[i], 2) > 0.48 and round(list_probability_y[i], 2) < 0.52:
+            offest_at_50_percent_probility = list_offset_bins_x[i]
+            
+    print('\noffest_at_50_percent_probility: %.5f' % offest_at_50_percent_probility)
+    this_result['offest_at_50_percent_probility'] = '%.5f' % offest_at_50_percent_probility
+            
+    pyplot.subplot(5,2,2)
+    pyplot.plot (list_offset_bins_x, list_probability_y)
+    pyplot.xlabel('Value')
+    pyplot.ylabel('Cumulative Probility')
+    
+    pyplot.subplot(5,2,3)
+    pyplot.scatter(list_inv_y_new, list_offset_absolute_new)
+    pyplot.title('offset_absolute by price')
+    pyplot.ylabel('offset')
+    pyplot.xlabel('price')
+    
+    # plot sequential_test_data_of_stocks
+    list_RMSE_sequential_test_data_of_stocks = []
+    list_test_stock = get_list_test_stock()
+    plot_position_flag = 9
+    for this_symbol in list_test_stock:
+        sequential_test_data_of_stocks = prepare_sequential_test_data_of_stocks(this_symbol)
+        sequential_test_data_of_stocks = sequential_test_data_of_stocks.drop('symbol', 1)
+        sequential_test_data_of_stocks = sequential_test_data_of_stocks.drop('date_group', 1)
+        sequential_test_data_of_stocks = sequential_test_data_of_stocks.drop('plus_1_day_low_price', 1)
+        sequential_test_data_of_stocks = sequential_test_data_of_stocks.drop('plus_1_day_high_price', 1)
+        sequential_test_data_of_stocks = sequential_test_data_of_stocks.drop('plus_2_day_high_price', 1)
+        sequential_test_data_of_stocks = scaler.transform(sequential_test_data_of_stocks.values)
+        
+        n_cols_outputs = 1
+        n_cols_inputs = sequential_test_data_of_stocks.shape[1] - n_cols_outputs
+        test_X, test_y = sequential_test_data_of_stocks[:, :n_cols_inputs], sequential_test_data_of_stocks[:, -n_cols_outputs]
+        # reshape input to be 3D [samples, timesteps, features]
+        test_X = test_X.reshape((test_X.shape[0], 1, test_X.shape[1]))
+        # make a prediction
+        y_predict = model.predict(test_X)
+        #print(test_X.shape)
+        test_X = test_X.reshape((test_X.shape[0], test_X.shape[2]))
+        # invert scaling for forecast
+        #print(test_X.shape)
+        #print(y_predict)
+        inv_y_predict = numpy.concatenate((test_X[:, :], y_predict), axis=1)
+        #print(inv_y_predict)
+        #print(inv_y_predict.shape)
+        inv_y_predict = scaler.inverse_transform(inv_y_predict)
+        inv_y_predict = inv_y_predict[:,-1]
+        # invert scaling for actual
+        test_y = test_y.reshape((len(test_y), 1))
+        inv_y = numpy.concatenate((test_X[:, :], test_y), axis=1)
+        inv_y = scaler.inverse_transform(inv_y)
+        inv_y = inv_y[:,-1]
+        # calculate RMSE
+        rmse = sqrt(mean_squared_error(inv_y, inv_y_predict))
+        print('Sequential Test RMSE ( {} ) : {:.3f}'.format(this_symbol, rmse))
+        list_RMSE_sequential_test_data_of_stocks.append(rmse)
+
+        pyplot.subplot(5,4,plot_position_flag)
+        pyplot.plot(inv_y, label='real')
+        pyplot.plot(inv_y_predict, label='predict')
+        pyplot.title(this_symbol)
+        pyplot.ylabel('price')
+        pyplot.xlabel('sequential_date')
+        pyplot.legend(['real', 'predict'], loc='upper left')
+        #axes = pyplot.gca()
+        #axes.set_xlim([xmin,xmax])
+        #axes.set_ylim([0,0.002])
+        
+        plot_position_flag = plot_position_flag + 1
+    
+    # get average
+    sequential_rmse = numpy.mean(list_RMSE_sequential_test_data_of_stocks)
+    print('Sequential Test RMSE Average : {:.3f}'.format(sequential_rmse))
+    this_result['Sequential_RMSE'] = '{:.3f}'.format(sequential_rmse)
+    
+    end_time = time.time()
+    loop_time = end_time - start_time
+    this_result['model_run_time'] = '{:.1f}'.format(loop_time)
+    print('Model Run Time : {:.1f}'.format(loop_time))
+    
+    # write to file
+    list_params_and_result = []
+    list_params_and_result.append(this_result)
+    output_file_path = './outputs_manual_train/stats/lstm_experiment_future_sell_price.csv'
+    list_header = ['model', 'hidden_layer', 'neurons', 'activation', 'optimizer', 'optimizer_lr', 'loss', 'epochs', 'batch_size', 'train_size', 'validation_size', 'model_run_time', 'RMSE', 'Sequential_RMSE', 'offest_at_50_percent_probility']
+    write_dict_to_csv( list_params_and_result, list_header, output_file_path )  
+    
+    # save model and scalar if best
+    min_RMSE = get_min_rmse_from_hisotry()
+    if float(this_result['RMSE']) < float(min_RMSE):
+        print('Save Model and scaler....')
+        # save the model to disk
+        model_filename = './finalized_model_plus_2_day_low_price.sav'
+        # keras api
+        model.save(model_filename)
+        # pickle will fail saving
+        #pickle.dump(model, open(model_filename, 'wb'))
+        
+        scaler_filename = './finalized_scaler_plus_2_day_low_price.sav'
+        pickle.dump(scaler, open(scaler_filename, 'wb'))
+        
+    else:
+        print('Not save Model and scaler....')
+        
+    # show plot
+    pyplot.show()
+    
+    # this line must exist for hyperopt fmin
+    return {'loss': rmse, 'status': STATUS_OK}
+
+if __name__ == '__main__':
+    #lstm_run_all()
+    #sys.exit()
+    #list_params_and_result = []
+    
+    # remove {loss: mean_absolute_percentage_error} for bad RMSE
+    #space = {   
+    #            'neurons': hp.choice('neurons', [36, 64, 72]),
+    #            'epochs': hp.choice('epochs', [200, 250, 300]),
+    #            'batch_size': hp.choice('batch_size', [36]),
+    #            'optimizer': hp.choice('optimizer', ['Adam']),
+    #            'optimizer_lr': hp.choice('lr', [0.001, 0.0005, 0.0001]),
+    #            'loss': hp.choice('loss', [losses.mae]),
+    #            'activation': hp.choice('activation',[
+    #                                                  'tanh'
+     #                                                ]),
+     #           'dropout': hp.choice('dropout', [0] ),
+    #            'filter_price': hp.choice('filter_price', [100] ),
+    #            'hidden_layer_number': hp.choice('hidden_layer_number', [1] )
+    #        }
+    
+    # DEBUG use
     #space = {   
     #        'neurons': hp.choice('neurons', [72]),
     #        'epochs': hp.choice('epochs', [50]),
@@ -23,3 +577,14 @@
             'filter_price': hp.choice('filter_price', [100] ),
             'hidden_layer_number': hp.choice('hidden_layer_number', [1] )
         }
+
+
+
+    experiment_run_flag = 0
+    trials = Trials()
+    best = fmin(lstm_experiment, space, algo=tpe.suggest, max_evals=1, trials=trials)    
+
+    print('----- best model error ------')
+    print(best)
+
+
